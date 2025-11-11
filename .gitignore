@@ -1,0 +1,55 @@
+# RADIUS Remote Client - Git Ignore
+
+# Archivos de configuración sensibles
+config.php
+install-info.txt
+
+# Logs
+logs/
+*.log
+
+# Datos de webhooks
+webhooks.json
+
+# Cache PHP
+*.cache
+
+# Archivos temporales
+*.tmp
+*.temp
+*~
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.project
+.settings/
+nbproject/
+
+# Composer
+/vendor/
+composer.lock
+
+# Node modules (si se usan)
+node_modules/
+package-lock.json
+
+# Backups
+*.bak
+*.backup
+*.old
+
+# Uploads (si los hay)
+uploads/
+
+# Session files
+sessions/
+*.sess
