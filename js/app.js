@@ -10,6 +10,7 @@ let searchQuery = '';
 document.addEventListener('DOMContentLoaded', function() {
     initTabs();
     initUserManagement();
+    initPlans();
     initStats();
     initSessions();
     initWebhooks();
@@ -44,6 +45,9 @@ function initTabs() {
                 switch(tabName) {
                     case 'users':
                         loadUsers();
+                        break;
+                    case 'plans':
+                        loadPlans();
                         break;
                     case 'stats':
                         loadStats();
@@ -653,4 +657,201 @@ function showNotification(message, type = 'info') {
         alert.style.animation = 'fadeOut 0.3s';
         setTimeout(() => alert.remove(), 300);
     }, 3000);
+}
+
+/**
+ * ========================================
+ * GESTIÓN DE PLANES
+ * ========================================
+ */
+
+function initPlans() {
+    const btnCreate = document.getElementById('btn-create-plan');
+    if (btnCreate) {
+        btnCreate.addEventListener('click', () => openPlanModal());
+    }
+
+    // Modal
+    const modal = document.getElementById('modal-plan');
+    const closeButtons = modal.querySelectorAll('.modal-close');
+
+    closeButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            modal.classList.remove('active');
+        });
+    });
+
+    // Click fuera del modal
+    window.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.classList.remove('active');
+        }
+    });
+
+    // Formulario
+    const form = document.getElementById('form-plan');
+    if (form) {
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            savePlan();
+        });
+    }
+}
+
+async function loadPlans() {
+    const container = document.getElementById('plans-grid');
+    container.innerHTML = '<p class="loading">Cargando planes...</p>';
+
+    try {
+        const response = await fetch(`${API_URL}/plans`);
+        const result = await response.json();
+
+        if (result.success) {
+            displayPlans(result.data);
+        } else {
+            showError('Error al cargar planes: ' + result.error);
+        }
+    } catch (error) {
+        showError('Error de conexión: ' + error.message);
+    }
+}
+
+function displayPlans(plans) {
+    const container = document.getElementById('plans-grid');
+
+    if (plans.length === 0) {
+        container.innerHTML = '<p class="text-center">No hay planes creados. Crea tu primer plan para comenzar.</p>';
+        return;
+    }
+
+    container.innerHTML = plans.map(plan => `
+        <div class="plan-card">
+            <div class="plan-header">
+                <h3>${escapeHtml(plan.name)}</h3>
+                <span class="plan-users-count">${plan.users_count || 0} usuarios</span>
+            </div>
+            <div class="plan-details">
+                <div class="plan-detail">
+                    <span class="plan-label">Subida:</span>
+                    <span class="plan-value">${escapeHtml(plan.upload_speed || '-')}</span>
+                </div>
+                <div class="plan-detail">
+                    <span class="plan-label">Bajada:</span>
+                    <span class="plan-value">${escapeHtml(plan.download_speed || '-')}</span>
+                </div>
+                ${plan.pool ? `
+                <div class="plan-detail">
+                    <span class="plan-label">Pool:</span>
+                    <span class="plan-value">${escapeHtml(plan.pool)}</span>
+                </div>
+                ` : ''}
+            </div>
+            <div class="plan-actions">
+                <button class="action-btn action-btn-edit" onclick="editPlan('${escapeHtml(plan.name)}')">
+                    ✏️ Editar
+                </button>
+                <button class="action-btn action-btn-delete" onclick="deletePlan('${escapeHtml(plan.name)}')">
+                    🗑️ Eliminar
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function openPlanModal(plan = null) {
+    const modal = document.getElementById('modal-plan');
+    const title = document.getElementById('modal-plan-title');
+    const form = document.getElementById('form-plan');
+
+    form.reset();
+
+    if (plan) {
+        title.textContent = 'Editar Plan';
+        document.getElementById('plan-original-name').value = plan.name;
+        document.getElementById('plan-name').value = plan.name;
+        document.getElementById('plan-name').disabled = true;
+        document.getElementById('plan-upload').value = plan.upload_speed || '';
+        document.getElementById('plan-download').value = plan.download_speed || '';
+        document.getElementById('plan-pool').value = plan.pool || '';
+    } else {
+        title.textContent = 'Crear Plan';
+        document.getElementById('plan-original-name').value = '';
+        document.getElementById('plan-name').disabled = false;
+    }
+
+    modal.classList.add('active');
+}
+
+async function savePlan() {
+    const originalName = document.getElementById('plan-original-name').value;
+    const data = {
+        name: document.getElementById('plan-name').value,
+        upload_speed: document.getElementById('plan-upload').value,
+        download_speed: document.getElementById('plan-download').value,
+        pool: document.getElementById('plan-pool').value
+    };
+
+    try {
+        const isEdit = originalName !== '';
+        const url = isEdit ? `${API_URL}/plan?name=${encodeURIComponent(originalName)}` : `${API_URL}/plans`;
+        const method = isEdit ? 'PUT' : 'POST';
+
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showSuccess(isEdit ? 'Plan actualizado correctamente' : 'Plan creado correctamente');
+            document.getElementById('modal-plan').classList.remove('active');
+            loadPlans();
+        } else {
+            showError('Error: ' + result.error);
+        }
+    } catch (error) {
+        showError('Error de conexión: ' + error.message);
+    }
+}
+
+async function editPlan(name) {
+    try {
+        const response = await fetch(`${API_URL}/plan?name=${encodeURIComponent(name)}`);
+        const result = await response.json();
+
+        if (result.success) {
+            openPlanModal(result.data);
+        } else {
+            showError('Error al cargar plan: ' + result.error);
+        }
+    } catch (error) {
+        showError('Error de conexión: ' + error.message);
+    }
+}
+
+async function deletePlan(name) {
+    if (!confirm(`¿Estás seguro de eliminar el plan "${name}"?\n\nSolo se puede eliminar si no tiene usuarios asignados.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/plan?name=${encodeURIComponent(name)}`, {
+            method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showSuccess('Plan eliminado correctamente');
+            loadPlans();
+        } else {
+            showError('Error al eliminar: ' + result.error);
+        }
+    } catch (error) {
+        showError('Error de conexión: ' + error.message);
+    }
 }

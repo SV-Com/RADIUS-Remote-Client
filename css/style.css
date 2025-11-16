@@ -679,3 +679,105 @@ body {
 .mt-20 { margin-top: 20px; }
 .mb-20 { margin-bottom: 20px; }
 .hidden { display: none; }
+
+/* ========================================
+   PLANES
+   ======================================== */
+
+.plans-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.plan-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    transition: all 0.3s;
+}
+
+.plan-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+}
+
+.plan-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid var(--primary-color);
+}
+
+.plan-header h3 {
+    font-size: 18px;
+    color: var(--primary-color);
+    margin: 0;
+}
+
+.plan-users-count {
+    background: var(--primary-color);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.plan-details {
+    margin-bottom: 15px;
+}
+
+.plan-detail {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.plan-detail:last-child {
+    border-bottom: none;
+}
+
+.plan-label {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.plan-value {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.plan-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.plan-actions .action-btn {
+    flex: 1;
+}
+
+/* Form small text */
+form small {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+/* Loading state for plans */
+.plans-grid .loading,
+.plans-grid .text-center {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 40px;
+    color: var(--text-secondary);
+}

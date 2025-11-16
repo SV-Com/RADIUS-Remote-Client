@@ -116,6 +116,24 @@ class RadiusAPI {
                 }
                 break;
 
+            case '/plans':
+                if ($method === 'GET') {
+                    $this->getPlans();
+                } elseif ($method === 'POST') {
+                    $this->createPlan();
+                }
+                break;
+
+            case '/plan':
+                if ($method === 'GET') {
+                    $this->getPlan();
+                } elseif ($method === 'PUT') {
+                    $this->updatePlan();
+                } elseif ($method === 'DELETE') {
+                    $this->deletePlan();
+                }
+                break;
+
             default:
                 $this->sendError('Endpoint not found', 404);
         }
@@ -762,6 +780,240 @@ class RadiusAPI {
         $minutes = floor(($seconds % 3600) / 60);
         $secs = $seconds % 60;
         return sprintf('%02d:%02d:%02d', $hours, $minutes, $secs);
+    }
+
+    /**
+     * ========================================
+     * GESTIÓN DE PLANES
+     * ========================================
+     */
+
+    /**
+     * Obtener lista de planes
+     */
+    private function getPlans() {
+        try {
+            $stmt = $this->db->prepare(
+                "SELECT groupname as name,
+                        MAX(CASE WHEN gc.attribute = 'Mikrotik-Rate-Limit' THEN gc.value END) as rate_limit,
+                        MAX(CASE WHEN gr.attribute = 'Framed-Pool' THEN gr.value END) as pool,
+                        COUNT(DISTINCT ug.username) as users_count
+                 FROM " . TABLE_PREFIX . "radgroupcheck gc
+                 LEFT JOIN " . TABLE_PREFIX . "radgroupreply gr ON gc.groupname = gr.groupname
+                 LEFT JOIN " . TABLE_PREFIX . "radusergroup ug ON gc.groupname = ug.groupname
+                 GROUP BY gc.groupname
+                 ORDER BY gc.groupname"
+            );
+            $stmt->execute();
+            $plans = $stmt->fetchAll();
+
+            // Parsear rate_limit para obtener velocidades
+            foreach ($plans as &$plan) {
+                if ($plan['rate_limit']) {
+                    $parts = explode('/', $plan['rate_limit']);
+                    $plan['upload_speed'] = $parts[0] ?? '';
+                    $plan['download_speed'] = $parts[1] ?? '';
+                } else {
+                    $plan['upload_speed'] = '';
+                    $plan['download_speed'] = '';
+                }
+            }
+
+            $this->sendSuccess($plans);
+
+        } catch (Exception $e) {
+            $this->sendError('Error loading plans: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Obtener un plan específico
+     */
+    private function getPlan() {
+        $name = $_GET['name'] ?? '';
+
+        if (!$name) {
+            $this->sendError('Plan name required', 400);
+        }
+
+        try {
+            $stmt = $this->db->prepare(
+                "SELECT groupname as name,
+                        attribute,
+                        op,
+                        value
+                 FROM " . TABLE_PREFIX . "radgroupcheck
+                 WHERE groupname = ?
+                 UNION
+                 SELECT groupname as name,
+                        attribute,
+                        op,
+                        value
+                 FROM " . TABLE_PREFIX . "radgroupreply
+                 WHERE groupname = ?"
+            );
+            $stmt->execute([$name, $name]);
+            $attributes = $stmt->fetchAll();
+
+            if (empty($attributes)) {
+                $this->sendError('Plan not found', 404);
+            }
+
+            $plan = ['name' => $name];
+            foreach ($attributes as $attr) {
+                if ($attr['attribute'] === 'Mikrotik-Rate-Limit') {
+                    $parts = explode('/', $attr['value']);
+                    $plan['upload_speed'] = $parts[0] ?? '';
+                    $plan['download_speed'] = $parts[1] ?? '';
+                } elseif ($attr['attribute'] === 'Framed-Pool') {
+                    $plan['pool'] = $attr['value'];
+                }
+            }
+
+            $this->sendSuccess($plan);
+
+        } catch (Exception $e) {
+            $this->sendError('Error loading plan: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Crear un plan nuevo
+     */
+    private function createPlan() {
+        $data = $this->getJsonInput();
+
+        if (!isset($data['name']) || !isset($data['upload_speed']) || !isset($data['download_speed'])) {
+            $this->sendError('Name, upload_speed and download_speed are required', 400);
+        }
+
+        try {
+            // Verificar que no exista
+            $stmt = $this->db->prepare("SELECT groupname FROM " . TABLE_PREFIX . "radgroupcheck WHERE groupname = ?");
+            $stmt->execute([$data['name']]);
+            if ($stmt->rowCount() > 0) {
+                $this->sendError('Plan already exists', 400);
+            }
+
+            // Crear rate limit (upload/download)
+            $rateLimit = $data['upload_speed'] . '/' . $data['download_speed'];
+
+            $stmt = $this->db->prepare(
+                "INSERT INTO " . TABLE_PREFIX . "radgroupreply (groupname, attribute, op, value) VALUES (?, 'Mikrotik-Rate-Limit', ':=', ?)"
+            );
+            $stmt->execute([$data['name'], $rateLimit]);
+
+            // Agregar pool si se especifica
+            if (!empty($data['pool'])) {
+                $stmt = $this->db->prepare(
+                    "INSERT INTO " . TABLE_PREFIX . "radgroupreply (groupname, attribute, op, value) VALUES (?, 'Framed-Pool', '=', ?)"
+                );
+                $stmt->execute([$data['name'], $data['pool']]);
+            }
+
+            // Crear entrada en radgroupcheck para que aparezca en listados
+            $stmt = $this->db->prepare(
+                "INSERT INTO " . TABLE_PREFIX . "radgroupcheck (groupname, attribute, op, value) VALUES (?, 'Auth-Type', ':=', 'Accept')"
+            );
+            $stmt->execute([$data['name']]);
+
+            $this->triggerWebhook('plan.created', $data);
+
+            $this->sendSuccess(['message' => 'Plan created successfully', 'name' => $data['name']], 201);
+
+        } catch (Exception $e) {
+            $this->sendError('Error creating plan: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Actualizar un plan
+     */
+    private function updatePlan() {
+        $name = $_GET['name'] ?? '';
+        $data = $this->getJsonInput();
+
+        if (!$name) {
+            $this->sendError('Plan name required', 400);
+        }
+
+        try {
+            // Actualizar rate limit
+            if (isset($data['upload_speed']) && isset($data['download_speed'])) {
+                $rateLimit = $data['upload_speed'] . '/' . $data['download_speed'];
+
+                $stmt = $this->db->prepare(
+                    "UPDATE " . TABLE_PREFIX . "radgroupreply SET value = ? WHERE groupname = ? AND attribute = 'Mikrotik-Rate-Limit'"
+                );
+                $stmt->execute([$rateLimit, $name]);
+
+                if ($stmt->rowCount() === 0) {
+                    $stmt = $this->db->prepare(
+                        "INSERT INTO " . TABLE_PREFIX . "radgroupreply (groupname, attribute, op, value) VALUES (?, 'Mikrotik-Rate-Limit', ':=', ?)"
+                    );
+                    $stmt->execute([$name, $rateLimit]);
+                }
+            }
+
+            // Actualizar pool
+            if (isset($data['pool'])) {
+                $stmt = $this->db->prepare(
+                    "UPDATE " . TABLE_PREFIX . "radgroupreply SET value = ? WHERE groupname = ? AND attribute = 'Framed-Pool'"
+                );
+                $stmt->execute([$data['pool'], $name]);
+
+                if ($stmt->rowCount() === 0 && !empty($data['pool'])) {
+                    $stmt = $this->db->prepare(
+                        "INSERT INTO " . TABLE_PREFIX . "radgroupreply (groupname, attribute, op, value) VALUES (?, 'Framed-Pool', '=', ?)"
+                    );
+                    $stmt->execute([$name, $data['pool']]);
+                }
+            }
+
+            $this->triggerWebhook('plan.updated', array_merge($data, ['name' => $name]));
+
+            $this->sendSuccess(['message' => 'Plan updated successfully']);
+
+        } catch (Exception $e) {
+            $this->sendError('Error updating plan: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Eliminar un plan
+     */
+    private function deletePlan() {
+        $name = $_GET['name'] ?? '';
+
+        if (!$name) {
+            $this->sendError('Plan name required', 400);
+        }
+
+        try {
+            // Verificar si hay usuarios asignados
+            $stmt = $this->db->prepare("SELECT COUNT(*) as count FROM " . TABLE_PREFIX . "radusergroup WHERE groupname = ?");
+            $stmt->execute([$name]);
+            $result = $stmt->fetch();
+
+            if ($result['count'] > 0) {
+                $this->sendError("Cannot delete plan: {$result['count']} users assigned to this plan", 400);
+            }
+
+            // Eliminar de radgroupcheck
+            $stmt = $this->db->prepare("DELETE FROM " . TABLE_PREFIX . "radgroupcheck WHERE groupname = ?");
+            $stmt->execute([$name]);
+
+            // Eliminar de radgroupreply
+            $stmt = $this->db->prepare("DELETE FROM " . TABLE_PREFIX . "radgroupreply WHERE groupname = ?");
+            $stmt->execute([$name]);
+
+            $this->triggerWebhook('plan.deleted', ['name' => $name]);
+
+            $this->sendSuccess(['message' => 'Plan deleted successfully']);
+
+        } catch (Exception $e) {
+            $this->sendError('Error deleting plan: ' . $e->getMessage(), 500);
+        }
     }
 }
 

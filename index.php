@@ -78,6 +78,7 @@ $connectionStatus = verifyConnection();
         <!-- Navigation -->
         <nav class="nav-tabs">
             <button class="tab-btn active" data-tab="users">Usuarios</button>
+            <button class="tab-btn" data-tab="plans">Planes</button>
             <button class="tab-btn" data-tab="stats">Estadísticas</button>
             <button class="tab-btn" data-tab="sessions">Sesiones Activas</button>
             <button class="tab-btn" data-tab="webhooks">Webhooks</button>
@@ -116,6 +117,17 @@ $connectionStatus = verifyConnection();
             </div>
 
             <div id="pagination" class="pagination"></div>
+        </div>
+
+        <!-- Plans Tab -->
+        <div id="plans-tab" class="tab-content">
+            <div class="toolbar">
+                <button id="btn-create-plan" class="btn btn-primary">+ Crear Plan</button>
+            </div>
+
+            <div class="plans-grid" id="plans-grid">
+                <p class="loading">Cargando planes...</p>
+            </div>
         </div>
 
         <!-- Stats Tab -->
@@ -253,6 +265,51 @@ $connectionStatus = verifyConnection();
                 <div class="form-group">
                     <label for="plan">Plan (opcional)</label>
                     <input type="text" id="plan" name="plan" placeholder="Plan 10MB">
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Crear/Editar Plan -->
+    <div id="modal-plan" class="modal">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <h2 id="modal-plan-title">Crear Plan</h2>
+
+            <form id="form-plan">
+                <input type="hidden" id="plan-original-name" name="original_name">
+
+                <div class="form-group">
+                    <label for="plan-name">Nombre del Plan *</label>
+                    <input type="text" id="plan-name" name="name" required
+                           placeholder="Plan 50MB">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="plan-upload">Subida *</label>
+                        <input type="text" id="plan-upload" name="upload_speed"
+                               placeholder="50M" required>
+                        <small>Ejemplos: 10M, 50M, 100M, 1G</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="plan-download">Bajada *</label>
+                        <input type="text" id="plan-download" name="download_speed"
+                               placeholder="50M" required>
+                        <small>Ejemplos: 10M, 50M, 100M, 1G</small>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="plan-pool">Pool IP (opcional)</label>
+                    <input type="text" id="plan-pool" name="pool" placeholder="pool-clientes">
+                    <small>Nombre del pool de IPs en FreeRADIUS</small>
                 </div>
 
                 <div class="form-actions">
