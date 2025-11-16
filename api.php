@@ -793,29 +793,55 @@ class RadiusAPI {
      */
     private function getPlans() {
         try {
-            $stmt = $this->db->prepare(
-                "SELECT gc.groupname as name,
-                        MAX(CASE WHEN gr.attribute = 'Mikrotik-Rate-Limit' THEN gr.value END) as rate_limit,
-                        MAX(CASE WHEN gr.attribute = 'Framed-Pool' THEN gr.value END) as pool,
-                        COUNT(DISTINCT ug.username) as users_count
-                 FROM " . TABLE_PREFIX . "radgroupcheck gc
-                 LEFT JOIN " . TABLE_PREFIX . "radgroupreply gr ON gc.groupname = gr.groupname
-                 LEFT JOIN " . TABLE_PREFIX . "radusergroup ug ON gc.groupname = ug.groupname
-                 GROUP BY gc.groupname
-                 ORDER BY gc.groupname"
-            );
+            $nasType = defined('NAS_TYPE') ? NAS_TYPE : 'mikrotik';
+
+            // Construir query según tipo de NAS
+            if ($nasType === 'huawei') {
+                $sql = "SELECT gc.groupname as name,
+                               MAX(CASE WHEN gr.attribute = 'Huawei-Input-Average-Rate' THEN gr.value END) as upload_bps,
+                               MAX(CASE WHEN gr.attribute = 'Huawei-Output-Average-Rate' THEN gr.value END) as download_bps,
+                               MAX(CASE WHEN gr.attribute = 'Framed-Pool' THEN gr.value END) as pool,
+                               COUNT(DISTINCT ug.username) as users_count
+                        FROM " . TABLE_PREFIX . "radgroupcheck gc
+                        LEFT JOIN " . TABLE_PREFIX . "radgroupreply gr ON gc.groupname = gr.groupname
+                        LEFT JOIN " . TABLE_PREFIX . "radusergroup ug ON gc.groupname = ug.groupname
+                        GROUP BY gc.groupname
+                        ORDER BY gc.groupname";
+            } else {
+                // Mikrotik y otros
+                $sql = "SELECT gc.groupname as name,
+                               MAX(CASE WHEN gr.attribute = 'Mikrotik-Rate-Limit' THEN gr.value END) as rate_limit,
+                               MAX(CASE WHEN gr.attribute = 'Framed-Pool' THEN gr.value END) as pool,
+                               COUNT(DISTINCT ug.username) as users_count
+                        FROM " . TABLE_PREFIX . "radgroupcheck gc
+                        LEFT JOIN " . TABLE_PREFIX . "radgroupreply gr ON gc.groupname = gr.groupname
+                        LEFT JOIN " . TABLE_PREFIX . "radusergroup ug ON gc.groupname = ug.groupname
+                        GROUP BY gc.groupname
+                        ORDER BY gc.groupname";
+            }
+
+            $stmt = $this->db->prepare($sql);
             $stmt->execute();
             $plans = $stmt->fetchAll();
 
-            // Parsear rate_limit para obtener velocidades
+            // Parsear velocidades según tipo de NAS
             foreach ($plans as &$plan) {
-                if ($plan['rate_limit']) {
-                    $parts = explode('/', $plan['rate_limit']);
-                    $plan['upload_speed'] = $parts[0] ?? '';
-                    $plan['download_speed'] = $parts[1] ?? '';
+                if ($nasType === 'huawei') {
+                    $plan['upload_speed'] = $plan['upload_bps'] ? bpsToSpeed($plan['upload_bps']) : '';
+                    $plan['download_speed'] = $plan['download_bps'] ? bpsToSpeed($plan['download_bps']) : '';
+                    unset($plan['upload_bps']);
+                    unset($plan['download_bps']);
                 } else {
-                    $plan['upload_speed'] = '';
-                    $plan['download_speed'] = '';
+                    // Mikrotik
+                    if ($plan['rate_limit']) {
+                        $parts = explode('/', $plan['rate_limit']);
+                        $plan['upload_speed'] = $parts[0] ?? '';
+                        $plan['download_speed'] = $parts[1] ?? '';
+                    } else {
+                        $plan['upload_speed'] = '';
+                        $plan['download_speed'] = '';
+                    }
+                    unset($plan['rate_limit']);
                 }
             }
 
@@ -895,13 +921,16 @@ class RadiusAPI {
                 $this->sendError('Plan already exists', 400);
             }
 
-            // Crear rate limit (upload/download)
-            $rateLimit = $data['upload_speed'] . '/' . $data['download_speed'];
+            // Obtener atributos formateados según tipo de NAS
+            $speedAttrs = formatSpeedForDb($data['upload_speed'], $data['download_speed'], true);
 
-            $stmt = $this->db->prepare(
-                "INSERT INTO " . TABLE_PREFIX . "radgroupreply (groupname, attribute, op, value) VALUES (?, 'Mikrotik-Rate-Limit', ':=', ?)"
-            );
-            $stmt->execute([$data['name'], $rateLimit]);
+            // Insertar atributos de velocidad
+            foreach ($speedAttrs as $attr) {
+                $stmt = $this->db->prepare(
+                    "INSERT INTO " . TABLE_PREFIX . "radgroupreply (groupname, attribute, op, value) VALUES (?, ?, ?, ?)"
+                );
+                $stmt->execute([$data['name'], $attr['attribute'], $attr['op'], $attr['value']]);
+            }
 
             // Agregar pool si se especifica
             if (!empty($data['pool'])) {
