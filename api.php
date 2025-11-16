@@ -794,8 +794,8 @@ class RadiusAPI {
     private function getPlans() {
         try {
             $stmt = $this->db->prepare(
-                "SELECT groupname as name,
-                        MAX(CASE WHEN gc.attribute = 'Mikrotik-Rate-Limit' THEN gc.value END) as rate_limit,
+                "SELECT gc.groupname as name,
+                        MAX(CASE WHEN gr.attribute = 'Mikrotik-Rate-Limit' THEN gr.value END) as rate_limit,
                         MAX(CASE WHEN gr.attribute = 'Framed-Pool' THEN gr.value END) as pool,
                         COUNT(DISTINCT ug.username) as users_count
                  FROM " . TABLE_PREFIX . "radgroupcheck gc
