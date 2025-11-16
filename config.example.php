@@ -2,10 +2,8 @@
 /**
  * Configuración del Cliente Remoto para FreeRADIUS
  *
- * INSTRUCCIONES:
- * 1. Copia este archivo como config.php
- * 2. Edita los valores según tu configuración
- * 3. Genera una API Key segura con: openssl rand -hex 32
+ * Este archivo contiene la configuración para conectarse a un servidor
+ * FreeRADIUS remoto (en otro servidor/ubicación)
  */
 
 // ========================================
@@ -28,7 +26,7 @@ define('REMOTE_DB_NAME', 'radius');
 define('REMOTE_DB_USER', 'radiusremote');
 
 // Contraseña del usuario MySQL
-define('REMOTE_DB_PASS', 'CAMBIAR_CONTRASEÑA_AQUI');
+define('REMOTE_DB_PASS', 'password_seguro_aqui');
 
 // ========================================
 // AUTENTICACIÓN DEL PANEL WEB
@@ -36,7 +34,7 @@ define('REMOTE_DB_PASS', 'CAMBIAR_CONTRASEÑA_AQUI');
 
 // API Key para acceder al panel web
 // Genera una clave segura con: openssl rand -hex 32
-define('API_KEY', 'GENERAR_API_KEY_AQUI');
+define('API_KEY', 'genera_una_clave_aleatoria_aqui');
 
 // ========================================
 // TÚNEL SSH (OPCIONAL - RECOMENDADO)
@@ -111,6 +109,35 @@ define('DEBUG_MODE', false);
 // Prefijo para las tablas (si tu instalación usa prefijo)
 define('TABLE_PREFIX', '');
 
+// Tipo de equipo NAS (Network Access Server)
+// Opciones: 'mikrotik', 'huawei', 'cisco'
+define('NAS_TYPE', 'huawei');
+
+// Atributos RADIUS según tipo de NAS
+// No modificar a menos que sepas lo que haces
+define('RATE_LIMIT_ATTRIBUTES', [
+    'mikrotik' => [
+        'upload' => 'Mikrotik-Rate-Limit',
+        'download' => 'Mikrotik-Rate-Limit',
+        'format' => 'combined',  // Formato: "upload/download"
+        'unit' => 'string'       // Ej: "50M/50M"
+    ],
+    'huawei' => [
+        'upload' => 'Huawei-Input-Average-Rate',
+        'download' => 'Huawei-Output-Average-Rate',
+        'upload_peak' => 'Huawei-Input-Peak-Rate',
+        'download_peak' => 'Huawei-Output-Peak-Rate',
+        'format' => 'separate',  // Atributos separados
+        'unit' => 'bps'          // Bits por segundo
+    ],
+    'cisco' => [
+        'upload' => 'Cisco-AVPair',
+        'download' => 'Cisco-AVPair',
+        'format' => 'avpair',
+        'unit' => 'bps'
+    ]
+]);
+
 // Zona horaria
 date_default_timezone_set('America/Argentina/Buenos_Aires');
 
@@ -131,12 +158,8 @@ if (!defined('REMOTE_DB_USER') || REMOTE_DB_USER === '') {
     die('Error: REMOTE_DB_USER no está configurado en config.php');
 }
 
-if (REMOTE_DB_PASS === 'CAMBIAR_CONTRASEÑA_AQUI') {
-    die('Error: Debes cambiar REMOTE_DB_PASS en config.php');
-}
-
-if (API_KEY === 'GENERAR_API_KEY_AQUI') {
-    die('Error: Debes generar una API_KEY en config.php. Usa: openssl rand -hex 32');
+if (API_KEY === 'genera_una_clave_aleatoria_aqui') {
+    die('Error: Debes cambiar la API_KEY en config.php. Genera una con: openssl rand -hex 32');
 }
 
 // ========================================
@@ -215,6 +238,171 @@ function checkAllowedIP() {
     $clientIP = $_SERVER['REMOTE_ADDR'] ?? '';
 
     return in_array($clientIP, ALLOWED_IPS);
+}
+
+/**
+ * ========================================
+ * FUNCIONES PARA GESTIÓN DE NAS
+ * ========================================
+ */
+
+/**
+ * Convertir velocidad en formato humano (50M) a bps
+ */
+function speedToBps($speed) {
+    $speed = strtoupper(trim($speed));
+
+    if (preg_match('/^(\d+(?:\.\d+)?)\s*([KMGT]?)B?P?S?$/i', $speed, $matches)) {
+        $value = floatval($matches[1]);
+        $unit = strtoupper($matches[2]);
+
+        $multipliers = [
+            '' => 1000000,      // Por defecto Mbps
+            'K' => 1000,        // Kbps
+            'M' => 1000000,     // Mbps
+            'G' => 1000000000,  // Gbps
+            'T' => 1000000000000 // Tbps
+        ];
+
+        return intval($value * ($multipliers[$unit] ?? 1000000));
+    }
+
+    // Si ya es un número, asumir que es bps
+    if (is_numeric($speed)) {
+        return intval($speed);
+    }
+
+    return 0;
+}
+
+/**
+ * Convertir bps a formato humano (50M)
+ */
+function bpsToSpeed($bps) {
+    $bps = intval($bps);
+
+    if ($bps == 0) return '0';
+
+    if ($bps >= 1000000000) {
+        return round($bps / 1000000000, 2) . 'G';
+    } elseif ($bps >= 1000000) {
+        return round($bps / 1000000, 2) . 'M';
+    } elseif ($bps >= 1000) {
+        return round($bps / 1000, 2) . 'K';
+    }
+
+    return $bps . 'bps';
+}
+
+/**
+ * Obtener atributos RADIUS según tipo de NAS
+ */
+function getNasAttributes() {
+    $nasType = defined('NAS_TYPE') ? NAS_TYPE : 'mikrotik';
+    $attributes = RATE_LIMIT_ATTRIBUTES[$nasType] ?? RATE_LIMIT_ATTRIBUTES['mikrotik'];
+    return $attributes;
+}
+
+/**
+ * Obtener nombre del atributo de upload según NAS
+ */
+function getUploadAttribute() {
+    $attrs = getNasAttributes();
+    return $attrs['upload'];
+}
+
+/**
+ * Obtener nombre del atributo de download según NAS
+ */
+function getDownloadAttribute() {
+    $attrs = getNasAttributes();
+    return $attrs['download'];
+}
+
+/**
+ * Formatear velocidad para guardar en BD según tipo de NAS
+ */
+function formatSpeedForDb($upload, $download, $forGroup = false) {
+    $attrs = getNasAttributes();
+    $nasType = defined('NAS_TYPE') ? NAS_TYPE : 'mikrotik';
+
+    if ($nasType === 'mikrotik') {
+        // Mikrotik: formato "upload/download"
+        return [
+            [
+                'attribute' => 'Mikrotik-Rate-Limit',
+                'op' => ':=',
+                'value' => $upload . '/' . $download
+            ]
+        ];
+    } elseif ($nasType === 'huawei') {
+        // Huawei: atributos separados en bps
+        $uploadBps = speedToBps($upload);
+        $downloadBps = speedToBps($download);
+
+        $result = [
+            [
+                'attribute' => 'Huawei-Input-Average-Rate',
+                'op' => ':=',
+                'value' => $uploadBps
+            ],
+            [
+                'attribute' => 'Huawei-Output-Average-Rate',
+                'op' => ':=',
+                'value' => $downloadBps
+            ]
+        ];
+
+        // Agregar peak rates (mismo valor que average)
+        if ($forGroup) {
+            $result[] = [
+                'attribute' => 'Huawei-Input-Peak-Rate',
+                'op' => ':=',
+                'value' => $uploadBps
+            ];
+            $result[] = [
+                'attribute' => 'Huawei-Output-Peak-Rate',
+                'op' => ':=',
+                'value' => $downloadBps
+            ];
+        }
+
+        return $result;
+    }
+
+    return [];
+}
+
+/**
+ * Parsear velocidades desde BD según tipo de NAS
+ */
+function parseSpeedFromDb($attributes) {
+    $nasType = defined('NAS_TYPE') ? NAS_TYPE : 'mikrotik';
+    $upload = '';
+    $download = '';
+
+    if ($nasType === 'mikrotik') {
+        // Buscar Mikrotik-Rate-Limit
+        foreach ($attributes as $attr) {
+            if ($attr['attribute'] === 'Mikrotik-Rate-Limit') {
+                $parts = explode('/', $attr['value']);
+                $upload = $parts[0] ?? '';
+                $download = $parts[1] ?? '';
+                break;
+            }
+        }
+    } elseif ($nasType === 'huawei') {
+        // Buscar atributos Huawei separados
+        foreach ($attributes as $attr) {
+            if ($attr['attribute'] === 'Huawei-Input-Average-Rate') {
+                $upload = bpsToSpeed($attr['value']);
+            } elseif ($attr['attribute'] === 'Huawei-Output-Average-Rate') {
+                $download = bpsToSpeed($attr['value']);
+            }
+        }
+    }
+
+    return ['upload' => $upload, 'download' => $download];
 }
 
 ?>
