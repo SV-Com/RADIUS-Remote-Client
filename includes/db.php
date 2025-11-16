@@ -169,10 +169,12 @@ function verifyConnection() {
         $missingTables = [];
 
         foreach ($tables as $table) {
-            $stmt = $conn->prepare("SHOW TABLES LIKE ?");
-            $stmt->execute([TABLE_PREFIX . $table]);
-            if ($stmt->rowCount() === 0) {
-                $missingTables[] = TABLE_PREFIX . $table;
+            $tableName = TABLE_PREFIX . $table;
+            $stmt = $conn->prepare("SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?");
+            $stmt->execute([$tableName]);
+            $result = $stmt->fetch();
+            if ($result['count'] == 0) {
+                $missingTables[] = $tableName;
             }
         }
 

@@ -17,6 +17,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once 'config.php';
 require_once 'includes/db.php';
 
+// Iniciar sesión para autenticación web
+session_start();
+
 // Clase para manejar la API
 class RadiusAPI {
     private $db;
@@ -122,6 +125,12 @@ class RadiusAPI {
      * Autenticación
      */
     private function authenticate() {
+        // Verificar sesión PHP (desde panel web)
+        if (isset($_SESSION['authenticated']) && $_SESSION['authenticated'] === true) {
+            return true;
+        }
+
+        // Verificar header Authorization (API externa)
         $headers = getallheaders();
         $authHeader = $headers['Authorization'] ?? '';
 
