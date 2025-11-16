@@ -134,6 +134,12 @@ class RadiusAPI {
                 }
                 break;
 
+            case '/disconnect':
+                if ($method === 'POST') {
+                    $this->disconnectUser();
+                }
+                break;
+
             default:
                 $this->sendError('Endpoint not found', 404);
         }
@@ -1043,6 +1049,118 @@ class RadiusAPI {
         } catch (Exception $e) {
             $this->sendError('Error deleting plan: ' . $e->getMessage(), 500);
         }
+    }
+
+    /**
+     * ========================================
+     * DESCONEXIÓN DE USUARIOS
+     * ========================================
+     */
+
+    /**
+     * Desconectar usuario (forzar reconexión PPPoE)
+     */
+    private function disconnectUser() {
+        $data = $this->getJsonInput();
+        $username = $data['username'] ?? '';
+
+        if (!$username) {
+            $this->sendError('Username required', 400);
+        }
+
+        try {
+            // Buscar sesión activa del usuario
+            $stmt = $this->db->prepare(
+                "SELECT radacctid, acctsessionid, nasipaddress, nasportid, framedipaddress
+                 FROM " . TABLE_PREFIX . "radacct
+                 WHERE username = ? AND acctstoptime IS NULL
+                 ORDER BY acctstarttime DESC
+                 LIMIT 1"
+            );
+            $stmt->execute([$username]);
+            $session = $stmt->fetch();
+
+            if (!$session) {
+                $this->sendError('User is not connected', 404);
+            }
+
+            // Insertar entrada de desconexión (CoA - Change of Authorization)
+            // Esto depende de si FreeRADIUS tiene módulo radclient o CoA habilitado
+
+            // Método 1: Cerrar la sesión en radacct (soft disconnect)
+            $stmt = $this->db->prepare(
+                "UPDATE " . TABLE_PREFIX . "radacct
+                 SET acctstoptime = NOW(),
+                     acctterminatecause = 'Admin-Disconnect'
+                 WHERE radacctid = ?"
+            );
+            $stmt->execute([$session['radacctid']]);
+
+            // Método 2: Si tienes radclient instalado, enviar packet de disconnect
+            if (defined('ENABLE_RADCLIENT') && ENABLE_RADCLIENT === true) {
+                $this->sendRadiusDisconnect($session);
+            }
+
+            $this->triggerWebhook('user.disconnected', [
+                'username' => $username,
+                'session_id' => $session['acctsessionid'],
+                'ip' => $session['framedipaddress']
+            ]);
+
+            $this->sendSuccess([
+                'message' => 'User disconnected successfully',
+                'username' => $username,
+                'session_closed' => true,
+                'reconnect_required' => true
+            ]);
+
+        } catch (Exception $e) {
+            $this->sendError('Error disconnecting user: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Enviar paquete RADIUS Disconnect (DM) usando radclient
+     * Requiere: radclient instalado y configurado
+     */
+    private function sendRadiusDisconnect($session) {
+        if (!defined('RADIUS_SERVER') || !defined('RADIUS_SECRET')) {
+            return false;
+        }
+
+        $nasIp = $session['nasipaddress'];
+        $sessionId = $session['acctsessionid'];
+        $framedIp = $session['framedipaddress'];
+
+        // Crear mensaje de disconnect
+        $message = "Acct-Session-Id=\"{$sessionId}\"\n";
+        if ($framedIp) {
+            $message .= "Framed-IP-Address={$framedIp}\n";
+        }
+
+        // Archivo temporal para el mensaje
+        $tempFile = tempnam(sys_get_temp_dir(), 'radius_dm_');
+        file_put_contents($tempFile, $message);
+
+        // Enviar con radclient
+        $radiusServer = defined('RADIUS_SERVER') ? RADIUS_SERVER : $nasIp;
+        $radiusPort = defined('RADIUS_PORT') ? RADIUS_PORT : 3799; // Puerto CoA/DM
+        $radiusSecret = defined('RADIUS_SECRET') ? RADIUS_SECRET : 'testing123';
+
+        $cmd = sprintf(
+            'echo %s | radclient -x %s:%d disconnect %s 2>&1',
+            escapeshellarg($message),
+            escapeshellarg($radiusServer),
+            $radiusPort,
+            escapeshellarg($radiusSecret)
+        );
+
+        exec($cmd, $output, $returnCode);
+
+        // Limpiar archivo temporal
+        @unlink($tempFile);
+
+        return $returnCode === 0;
     }
 }
 

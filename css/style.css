@@ -781,3 +781,28 @@ form small {
     padding: 40px;
     color: var(--text-secondary);
 }
+
+/* ========================================
+   BOTÓN RECONECTAR
+   ======================================== */
+
+.action-btn-reconnect {
+    background: var(--warning-color);
+    color: white;
+}
+
+.action-btn-reconnect:hover {
+    background: #d97706;
+    transform: translateY(-1px);
+}
+
+.action-buttons {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.action-buttons .action-btn {
+    font-size: 12px;
+    padding: 5px 10px;
+}

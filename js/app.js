@@ -178,7 +178,12 @@ function displayUsers(users) {
                 </span>
             </td>
             <td>${user.last_connection ? formatDate(user.last_connection) : 'Nunca'}</td>
-            <td>
+            <td class="action-buttons">
+                ${user.last_connection ? `
+                <button class="action-btn action-btn-reconnect" onclick="disconnectUser('${escapeHtml(user.username)}')">
+                    🔌 Reconectar
+                </button>
+                ` : ''}
                 <button class="action-btn action-btn-edit" onclick="editUser('${escapeHtml(user.username)}')">
                     ✏️ Editar
                 </button>
@@ -850,6 +855,46 @@ async function deletePlan(name) {
             loadPlans();
         } else {
             showError('Error al eliminar: ' + result.error);
+        }
+    } catch (error) {
+        showError('Error de conexión: ' + error.message);
+    }
+}
+
+/**
+ * ========================================
+ * DESCONEXIÓN DE USUARIOS
+ * ========================================
+ */
+
+/**
+ * Desconectar usuario (forzar reconexión)
+ */
+async function disconnectUser(username) {
+    if (!confirm(`¿Desconectar al usuario "${username}"?\n\nEsto forzará la reconexión del dispositivo PPPoE.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/disconnect`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username: username })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showSuccess(`Usuario ${username} desconectado. El dispositivo se reconectará automáticamente.`);
+
+            // Recargar usuarios después de 2 segundos
+            setTimeout(() => {
+                loadUsers();
+            }, 2000);
+        } else {
+            showError('Error al desconectar: ' + result.error);
         }
     } catch (error) {
         showError('Error de conexión: ' + error.message);
